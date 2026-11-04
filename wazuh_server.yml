@@ -1,0 +1,35 @@
+---
+- name: Install Wazuh all-in-one
+  hosts: wazuh_server
+  become: true
+  tasks:
+    - name: Create a working directory for the installer
+      ansible.builtin.file:
+        path: /opt/wazuh-install
+        state: directory
+        mode: "0750"
+
+    - name: Download the Wazuh installation assistant
+      ansible.builtin.get_url:
+        url: https://packages.wazuh.com/4.14/wazuh-install.sh
+        dest: /opt/wazuh-install/wazuh-install.sh
+        mode: "0750"
+
+    - name: Run the installer (all-in-one)
+      ansible.builtin.command:
+        cmd: bash /opt/wazuh-install/wazuh-install.sh -a -i
+        chdir: /opt/wazuh-install
+        creates: /var/ossec/bin/wazuh-control
+      async: 3600
+      poll: 30
+
+    - name: Read the generated passwords
+      ansible.builtin.command:
+        cmd: tar -O -xf wazuh-install-files.tar wazuh-install-files/wazuh-passwords.txt
+        chdir: /opt/wazuh-install
+      register: wazuh_passwords
+      changed_when: false
+
+    - name: Show the passwords
+      ansible.builtin.debug:
+        var: wazuh_passwords.stdout_lines

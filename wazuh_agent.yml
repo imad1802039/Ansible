@@ -1,0 +1,55 @@
+---
+- name: Install Wazuh agent
+  hosts: suri
+  become: true
+  vars:
+    wazuh_manager_ip: "{{ hostvars['wazuh'].ansible_host }}"
+    wazuh_agent_version: "4.14.9-1"
+  tasks:
+    - name: Download the Wazuh repository signing key
+      ansible.builtin.get_url:
+        url: https://packages.wazuh.com/key/GPG-KEY-WAZUH
+        dest: /usr/share/keyrings/wazuh.asc
+        mode: "0644"
+
+    - name: Add the Wazuh apt repository
+      ansible.builtin.apt_repository:
+        repo: "deb [signed-by=/usr/share/keyrings/wazuh.asc] https://packages.wazuh.com/4.x/apt/ stable main"
+        filename: wazuh
+        state: present
+
+    - name: Install the Wazuh agent
+      ansible.builtin.apt:
+        name: "wazuh-agent={{ wazuh_agent_version }}"
+        state: present
+        update_cache: true
+      environment:
+        WAZUH_MANAGER: "{{ wazuh_manager_ip }}"
+
+    - name: Hold the agent package at this version
+      ansible.builtin.dpkg_selections:
+        name: wazuh-agent
+        selection: hold
+
+    - name: Make sure the agent points at the Wazuh manager
+      ansible.builtin.replace:
+        path: /var/ossec/etc/ossec.conf
+        regexp: '(<address>).*?(</address>)'
+        replace: '\g<1>{{ wazuh_manager_ip }}\g<2>'
+      notify: Restart Wazuh agent
+
+    - name: Reload systemd so it sees the new service unit
+      ansible.builtin.systemd:
+        daemon_reload: true
+
+    - name: Enable and start the Wazuh agent
+      ansible.builtin.systemd:
+        name: wazuh-agent
+        enabled: true
+        state: started
+
+  handlers:
+    - name: Restart Wazuh agent
+      ansible.builtin.systemd:
+        name: wazuh-agent
+        state: restarted

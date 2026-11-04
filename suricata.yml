@@ -1,0 +1,58 @@
+---
+- name: Install Suricata and forward its logs to Wazuh
+  hosts: suri
+  become: true
+  tasks:
+    - name: Install Suricata
+      ansible.builtin.apt:
+        name: suricata
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Point Suricata at this machine's network interface
+      ansible.builtin.replace:
+        path: /etc/suricata/suricata.yaml
+        regexp: '^(\s*-\s*interface:\s*)eth0\s*$'
+        replace: '\1{{ ansible_facts["default_ipv4"]["interface"] }}'
+      notify: Restart Suricata
+
+    - name: Download the Emerging Threats rules
+      ansible.builtin.command:
+        cmd: suricata-update
+        creates: /var/lib/suricata/rules/suricata.rules
+      notify: Restart Suricata
+
+    - name: Validate the Suricata configuration
+      ansible.builtin.command:
+        cmd: suricata -T -c /etc/suricata/suricata.yaml
+      changed_when: false
+
+    - name: Enable and start Suricata
+      ansible.builtin.systemd:
+        name: suricata
+        enabled: true
+        state: started
+
+    - name: Tell the Wazuh agent to read Suricata's eve.json
+      ansible.builtin.blockinfile:
+        path: /var/ossec/etc/ossec.conf
+        insertbefore: '</ossec_config>'
+        marker: "<!-- {mark} ANSIBLE MANAGED: Suricata eve.json -->"
+        block: |
+          <localfile>
+            <log_format>json</log_format>
+            <location>/var/log/suricata/eve.json</location>
+          </localfile>
+      notify: Restart Wazuh agent
+
+  handlers:
+    - name: Restart Suricata
+      ansible.builtin.systemd:
+        name: suricata
+        state: restarted
+
+    - name: Restart Wazuh agent
+      ansible.builtin.systemd:
+        name: wazuh-agent
+        state: restarted
