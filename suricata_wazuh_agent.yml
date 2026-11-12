@@ -1,0 +1,60 @@
+---
+- name: Install/update Wazuh agent on Suricata host
+  hosts: ids
+  become: true
+  vars:
+    wazuh_manager_ip: "{{ hostvars['wazuh'].ansible_host }}"
+    suricata_eve_log: /var/log/suricata/eve.json
+  tasks:
+    - name: Add Wazuh GPG key
+      ansible.builtin.get_url:
+        url: https://packages.wazuh.com/key/GPG-KEY-WAZUH
+        dest: /usr/share/keyrings/wazuh.asc
+        mode: "0644"
+      when: ansible_os_family == "Debian"
+
+    - name: Add Wazuh APT repository
+      ansible.builtin.apt_repository:
+        repo: "deb [signed-by=/usr/share/keyrings/wazuh.asc] https://packages.wazuh.com/4.x/apt/ stable main"
+        filename: wazuh
+        state: present
+      when: ansible_os_family == "Debian"
+
+    - name: Install or upgrade wazuh-agent (auto-enrolls on first install)
+      ansible.builtin.apt:
+        name: wazuh-agent
+        state: latest
+        update_cache: true
+      environment:
+        WAZUH_MANAGER: "{{ wazuh_manager_ip }}"
+      when: ansible_os_family == "Debian"
+
+    - name: Ensure manager address is correct
+      ansible.builtin.replace:
+        path: /var/ossec/etc/ossec.conf
+        regexp: '<address>.*</address>'
+        replace: "<address>{{ wazuh_manager_ip }}</address>"
+
+    - name: Add Suricata eve.json to monitored logs
+      ansible.builtin.blockinfile:
+        path: /var/ossec/etc/ossec.conf
+        marker: "<!-- {mark} ANSIBLE SURICATA -->"
+        insertbefore: "</ossec_config>"
+        block: |
+          <localfile>
+            <log_format>json</log_format>
+            <location>{{ suricata_eve_log }}</location>
+          </localfile>
+
+    - name: Enable and restart agent
+      ansible.builtin.systemd:
+        name: wazuh-agent
+        state: restarted
+        enabled: true
+        daemon_reload: true
+
+    - name: Verify agent is active
+      ansible.builtin.command: systemctl is-active wazuh-agent
+      register: a
+      changed_when: false
+      failed_when: a.stdout != 'active'
