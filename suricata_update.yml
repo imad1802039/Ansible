@@ -1,0 +1,50 @@
+---
+- name: Update Suricata and rules
+  hosts: ids
+  become: true
+  vars:
+    use_oisf_ppa: true     # Ubuntu only: newest stable Suricata
+  tasks:
+    - name: Add OISF stable PPA
+      ansible.builtin.apt_repository:
+        repo: ppa:oisf/suricata-stable
+        state: present
+      when: ansible_distribution == "Ubuntu" and use_oisf_ppa
+
+    - name: Update Suricata package
+      ansible.builtin.package:
+        name: suricata
+        state: latest
+        update_cache: "{{ true if ansible_os_family == 'Debian' else omit }}"
+      register: suri_pkg
+
+    - name: Update rule sources index
+      ansible.builtin.command: suricata-update update-sources
+      changed_when: false
+
+    - name: Download and merge latest rules
+      ansible.builtin.command: suricata-update
+      register: rules
+      changed_when: "'Wrote' in rules.stdout or 'Loaded' in rules.stdout"
+
+    - name: Validate configuration
+      ansible.builtin.command: suricata -T -c /etc/suricata/suricata.yaml -v
+      changed_when: false
+
+    - name: Restart Suricata
+      ansible.builtin.systemd:
+        name: suricata
+        state: restarted
+        enabled: true
+
+    - name: Confirm Suricata is active
+      ansible.builtin.command: systemctl is-active suricata
+      register: s
+      changed_when: false
+      failed_when: s.stdout != 'active'
+
+    - name: Show version
+      ansible.builtin.command: suricata -V
+      register: ver
+      changed_when: false
+    - ansible.builtin.debug: { var: ver.stdout }
