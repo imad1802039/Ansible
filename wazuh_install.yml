@@ -1,1 +1,64 @@
 
+---
+- name: Wazuh all-in-one installation
+  hosts: siem
+  become: true
+  vars:
+    wazuh_install_url: "https://packages.wazuh.com/4.x/wazuh-install.sh"
+    wazuh_ignore_hw_check: true      # adds -i, skips the CPU/RAM check
+  tasks:
+    - name: Check if Wazuh is already installed
+      ansible.builtin.stat:
+        path: /var/ossec/bin/wazuh-control
+      register: wazuh_bin
+
+    - name: Install prerequisites
+      ansible.builtin.package:
+        name: [curl, tar, gnupg]
+        state: present
+      when: not wazuh_bin.stat.exists
+
+    - name: Download Wazuh installation assistant
+      ansible.builtin.get_url:
+        url: "{{ wazuh_install_url }}"
+        dest: /root/wazuh-install.sh
+        mode: "0700"
+      when: not wazuh_bin.stat.exists
+
+    - name: Run all-in-one installer (takes 10-25 minutes)
+      ansible.builtin.command:
+        cmd: "bash /root/wazuh-install.sh -a {{ '-i' if wazuh_ignore_hw_check else '' }}"
+        chdir: /root
+      async: 3600
+      poll: 30
+      register: wazuh_install
+      when: not wazuh_bin.stat.exists
+
+    - name: Read generated admin credentials
+      ansible.builtin.shell: >
+        tar -axf /root/wazuh-install-files.tar -O
+        wazuh-install-files/wazuh-passwords.txt | grep -A1 "'admin'"
+      register: wazuh_creds
+      changed_when: false
+      failed_when: false
+
+    - name: Show credentials (copy them, then delete this task output)
+      ansible.builtin.debug:
+        var: wazuh_creds.stdout_lines
+
+    - name: Verify services are running
+      ansible.builtin.command: "systemctl is-active {{ item }}"
+      loop: [wazuh-manager, wazuh-indexer, wazuh-dashboard, filebeat]
+      register: svc
+      changed_when: false
+      failed_when: svc.stdout != 'active'
+
+    - name: Verify dashboard answers on 443
+      ansible.builtin.uri:
+        url: "https://127.0.0.1"
+        validate_certs: false
+        status_code: [200, 302]
+      register: dash
+      retries: 10
+      delay: 15
+      until: dash.status in [200, 302]
