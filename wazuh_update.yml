@@ -1,0 +1,45 @@
+---
+- name: Update Wazuh server stack
+  hosts: siem
+  become: true
+  serial: 1
+  tasks:
+    - name: Refresh package cache
+      ansible.builtin.package:
+        update_cache: true
+      when: ansible_os_family == "Debian"
+
+    - name: Stop filebeat and dashboard
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: stopped
+      loop: [filebeat, wazuh-dashboard]
+
+    - name: Upgrade indexer
+      ansible.builtin.package: { name: wazuh-indexer, state: latest }
+    - name: Restart indexer
+      ansible.builtin.systemd: { name: wazuh-indexer, state: restarted, daemon_reload: true }
+
+    - name: Upgrade manager
+      ansible.builtin.package: { name: wazuh-manager, state: latest }
+    - name: Restart manager
+      ansible.builtin.systemd: { name: wazuh-manager, state: restarted, daemon_reload: true }
+
+    - name: Upgrade filebeat
+      ansible.builtin.package: { name: filebeat, state: latest }
+    - name: Upgrade dashboard
+      ansible.builtin.package: { name: wazuh-dashboard, state: latest }
+
+    - name: Start filebeat and dashboard
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: restarted
+        daemon_reload: true
+      loop: [filebeat, wazuh-dashboard]
+
+    - name: Verify all services
+      ansible.builtin.command: "systemctl is-active {{ item }}"
+      loop: [wazuh-indexer, wazuh-manager, filebeat, wazuh-dashboard]
+      register: svc
+      changed_when: false
+      failed_when: svc.stdout != 'active'
