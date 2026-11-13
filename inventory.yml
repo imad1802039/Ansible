@@ -1,0 +1,6 @@
+[all:vars]
+ansible_python_interpreter=/usr/bin/python3
+[ids]
+suricata ansible_host=192.168.190.175 ansible_user=suricata
+[siem]
+wazuh ansible_host=192.168.190.173 ansible_user=wazuh
